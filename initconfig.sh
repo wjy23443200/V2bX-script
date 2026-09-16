@@ -10,6 +10,50 @@ check_ipv6_support() {
     fi
 }
 
+# Local presets contain credentials and must never be sourced as shell code.
+profile_command() {
+    local helper="${V2BX_PROFILE_HELPER:-/usr/local/V2bX/profile.py}"
+    if ! command -v python3 >/dev/null 2>&1 || [ ! -f "$helper" ]; then
+        echo "本地配置包功能需要 python3 和 profile.py，请先更新管理脚本。" >&2
+        return 1
+    fi
+    python3 "$helper" --profile "${V2BX_PROFILE:-/etc/V2bX/profile.json}" "$@"
+}
+
+load_profile() {
+    profile_loaded=false
+    local file="${V2BX_PROFILE:-/etc/V2bX/profile.json}"
+    if [ ! -f "$file" ]; then
+        if [ -n "${V2BX_PROFILE:-}" ]; then
+            echo "指定的配置包不存在。" >&2
+            return 1
+        fi
+        return 0
+    fi
+    profile_command validate || return 1
+    chmod 600 "$file" || return 1
+    PresetApiHost=$(profile_command value ApiHost) || return 1
+    PresetApiKey=$(profile_command value ApiKey) || return 1
+    PresetFixedAPI=$(profile_command value FixedAPI) || return 1
+    profile_loaded=true
+    profile_command show || return 1
+}
+
+read_panel_config() {
+    if [ "$profile_loaded" = true ]; then
+        local use_preset
+        read -rp "使用配置包中的面板地址和 API Key？[Y/n]：" use_preset
+        if [[ ! "$use_preset" =~ ^[Nn] ]]; then
+            ApiHost="$PresetApiHost"
+            ApiKey="$PresetApiKey"
+            return 0
+        fi
+    fi
+    read -rp "请输入机场网址(https://example.com)：" ApiHost
+    read -rsp "请输入面板对接API Key（隐藏输入）：" ApiKey
+    echo
+}
+
 add_node_config() {
     # Keep TLS and Reality choices local to the current node.
     local istls="n" isreality="n"
@@ -108,13 +152,16 @@ add_node_config() {
     if [ "$ipv6_support" -eq 1 ]; then
         listen_ip="::"
     fi
+    local json_api_host json_api_key
+    json_api_host=$(printf '%s' "$ApiHost" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))') || return 1
+    json_api_key=$(printf '%s' "$ApiKey" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))') || return 1
     node_config=""
     if [ "$core_type" == "1" ]; then 
     node_config=$(cat <<EOF
 {
             "Core": "$core",
-            "ApiHost": "$ApiHost",
-            "ApiKey": "$ApiKey",
+            "ApiHost": $json_api_host,
+            "ApiKey": $json_api_key,
             "NodeID": $NodeID,
             "NodeType": "$NodeType",
             "Timeout": 30,
@@ -145,8 +192,8 @@ EOF
     node_config=$(cat <<EOF
 {
             "Core": "$core",
-            "ApiHost": "$ApiHost",
-            "ApiKey": "$ApiKey",
+            "ApiHost": $json_api_host,
+            "ApiKey": $json_api_key,
             "NodeID": $NodeID,
             "NodeType": "$NodeType",
             "Timeout": 30,
@@ -175,8 +222,8 @@ EOF
     node_config=$(cat <<EOF
 {
             "Core": "$core",
-            "ApiHost": "$ApiHost",
-            "ApiKey": "$ApiKey",
+            "ApiHost": $json_api_host,
+            "ApiKey": $json_api_key,
             "NodeID": $NodeID,
             "NodeType": "$NodeType",
             "Hysteria2ConfigPath": "/etc/V2bX/hy2config.yaml",
@@ -205,6 +252,8 @@ EOF
 }
 
 generate_config_file() {
+    load_profile || return 1
+    umask 077
     echo -e "${yellow}V2bX 配置文件生成向导${plain}"
     echo -e "${red}请阅读以下注意事项：${plain}"
     echo -e "${red}1. 目前该功能正处测试阶段${plain}"
@@ -212,7 +261,11 @@ generate_config_file() {
     echo -e "${red}3. 原来的配置文件会保存到 /etc/V2bX/config.json.bak${plain}"
     echo -e "${red}4. 目前仅部分支持TLS${plain}"
     echo -e "${red}5. 使用此功能生成的配置文件会自带审计，确定继续？(y/n)${plain}"
-    read -rp "请输入：" continue_prompt
+    if [ "$profile_loaded" = true ]; then
+        continue_prompt=y
+    else
+        read -rp "请输入：" continue_prompt
+    fi
     if [[ "$continue_prompt" =~ ^[Nn][Oo]? ]]; then
         exit 0
     fi
@@ -227,24 +280,27 @@ generate_config_file() {
     
     while true; do
         if [ "$first_node" = true ]; then
-            read -rp "请输入机场网址(https://example.com)：" ApiHost
-            read -rp "请输入面板对接API Key：" ApiKey
-            read -rp "是否设置固定的机场网址和API Key？(y/n)" fixed_api
-            if [ "$fixed_api" = "y" ] || [ "$fixed_api" = "Y" ]; then
-                fixed_api_info=true
-                echo -e "${red}成功固定地址${plain}"
+            if [ "$profile_loaded" = true ]; then
+                ApiHost="$PresetApiHost"
+                ApiKey="$PresetApiKey"
+                fixed_api_info="$PresetFixedAPI"
+            else
+                read_panel_config
+                read -rp "是否设置固定的机场网址和API Key？(y/n)" fixed_api
+                if [[ "$fixed_api" == [Yy] ]]; then
+                    fixed_api_info=true
+                fi
             fi
             first_node=false
-            add_node_config
+            add_node_config || return 1
         else
             read -rp "是否继续添加节点配置？(回车继续，输入n或no退出)" continue_adding_node
             if [[ "$continue_adding_node" =~ ^[Nn][Oo]? ]]; then
                 break
             elif [ "$fixed_api_info" = false ]; then
-                read -rp "请输入机场网址(https://example.com)：" ApiHost
-                read -rp "请输入面板对接API Key：" ApiKey
+                read_panel_config
             fi
-            add_node_config
+            add_node_config || return 1
         fi
     done
 
@@ -509,4 +565,3 @@ EOF
     echo -e "${green}V2bX 配置文件生成完成,正在重新启动服务${plain}"
     v2bx restart
 }
-

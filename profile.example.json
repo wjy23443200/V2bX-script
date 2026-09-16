@@ -1,0 +1,7 @@
+{
+  "Version": 1,
+  "ApiHost": "https://panel.example.com",
+  "ApiKey": "REPLACE_WITH_YOUR_API_KEY",
+  "FixedAPI": false,
+  "Audit": "builtin"
+}

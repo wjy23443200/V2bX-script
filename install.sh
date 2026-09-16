@@ -80,23 +80,23 @@ fi
 
 install_base() {
     if [[ x"${release}" == x"centos" ]]; then
-        yum install epel-release wget curl unzip tar crontabs socat ca-certificates -y >/dev/null 2>&1
+        yum install epel-release python3 wget curl unzip tar crontabs socat ca-certificates -y >/dev/null 2>&1
         update-ca-trust force-enable >/dev/null 2>&1
     elif [[ x"${release}" == x"alpine" ]]; then
-        apk add wget curl unzip tar socat ca-certificates >/dev/null 2>&1
+        apk add python3 wget curl unzip tar socat ca-certificates >/dev/null 2>&1
         update-ca-certificates >/dev/null 2>&1
     elif [[ x"${release}" == x"debian" ]]; then
         apt-get update -y >/dev/null 2>&1
-        apt install wget curl unzip tar cron socat ca-certificates -y >/dev/null 2>&1
+        apt install python3 wget curl unzip tar cron socat ca-certificates -y >/dev/null 2>&1
         update-ca-certificates >/dev/null 2>&1
     elif [[ x"${release}" == x"ubuntu" ]]; then
         apt-get update -y >/dev/null 2>&1
-        apt install wget curl unzip tar cron socat -y >/dev/null 2>&1
+        apt install python3 wget curl unzip tar cron socat -y >/dev/null 2>&1
         apt-get install ca-certificates wget -y >/dev/null 2>&1
         update-ca-certificates >/dev/null 2>&1
     elif [[ x"${release}" == x"arch" ]]; then
         pacman -Sy --noconfirm >/dev/null 2>&1
-        pacman -S --noconfirm --needed wget curl unzip tar cron socat >/dev/null 2>&1
+        pacman -S --noconfirm --needed python3 wget curl unzip tar cron socat >/dev/null 2>&1
         pacman -S --noconfirm --needed ca-certificates wget >/dev/null 2>&1
     fi
 }
@@ -246,6 +246,10 @@ EOF
     if [[ ! -f /etc/V2bX/custom_inbound.json ]]; then
         cp custom_inbound.json /etc/V2bX/
     fi
+    curl -fLsS https://raw.githubusercontent.com/wjy23443200/V2bX-script/master/profile.py -o /usr/local/V2bX/profile.py || return 1
+    if [ -n "${V2BX_PROFILE:-}" ]; then
+        python3 /usr/local/V2bX/profile.py import "$V2BX_PROFILE" || return 1
+    fi
     curl -o /usr/bin/V2bX -Ls https://raw.githubusercontent.com/wjy23443200/V2bX-script/master/V2bX.sh
     chmod +x /usr/bin/V2bX
     if [ ! -L /usr/bin/v2bx ]; then
@@ -289,4 +293,3 @@ EOF
 echo -e "${green}开始安装${plain}"
 install_base
 install_V2bX $1
-
