@@ -11,6 +11,8 @@ check_ipv6_support() {
 }
 
 add_node_config() {
+    # Keep TLS and Reality choices local to the current node.
+    local istls="n" isreality="n"
     echo -e "${green}请选择节点核心类型：${plain}"
     echo -e "${green}1. xray${plain}"
     echo -e "${green}2. singbox${plain}"
@@ -507,3 +509,4 @@ EOF
     echo -e "${green}V2bX 配置文件生成完成,正在重新启动服务${plain}"
     v2bx restart
 }
+
