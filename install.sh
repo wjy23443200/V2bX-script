@@ -115,22 +115,31 @@ install_base() {
 }
 
 install_V2bX() {
+    local core_version="v0.4.0" core_release="core-v0.4.0" expected_sha256 asset_dir asset_file actual_sha256
+    case "$arch" in
+        64) expected_sha256="ba694f3285a5653ce75db305b37407f553490dc524012890bacec8f0c2770253" ;;
+        arm64-v8a) expected_sha256="02402839a2d7a67f077a299a27250ba96ec25f27ad22826198b8392d30b50ca3" ;;
+        s390x) expected_sha256="16eec73605feb5be02800742c7d30aacf14c18c65c9cf7bca4255cf55f60198b" ;;
+        *) echo -e "${red}不支持的 CPU 架构：${arch}${plain}" >&2; return 1 ;;
+    esac
+    asset_dir=$(mktemp -d) || return 1
+    asset_file="${asset_dir}/V2bX-linux-${arch}.zip"
+    echo "从本仓库下载 V2bX 核心 ${core_version}（${arch}）"
+    if ! curl -fLsS "https://github.com/wjy23443200/V2bX-script/releases/download/${core_release}/V2bX-linux-${arch}.zip" -o "$asset_file"; then
+        echo -e "${red}下载 V2bX 失败，请确认 VPS 可以访问 GitHub。${plain}" >&2
+        rm -rf "$asset_dir"
+        return 1
+    fi
+    actual_sha256=$(sha256sum "$asset_file" | awk '{print $1}')
+    if [[ "$actual_sha256" != "$expected_sha256" ]]; then
+        echo -e "${red}V2bX 下载文件校验失败，安装已停止。${plain}" >&2
+        rm -rf "$asset_dir"
+        return 1
+    fi
     mkdir /usr/local/V2bX/ -p
     cd /usr/local/V2bX/
-
-    last_version=$(curl -fLsS "https://api.github.com/repos/wyx2685/V2bX/releases/latest" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')
-    if [[ ! "$last_version" =~ ^[A-Za-z0-9._-]+$ ]]; then
-        echo -e "${red}检测 V2bX 最新版本失败，请确认 GitHub 可以访问。${plain}" >&2
-        return 1
-    fi
-    echo "检测到 V2bX 最新版本：${last_version}，开始安装"
-    if ! wget -N --progress=bar -O /usr/local/V2bX/V2bX-linux.zip "https://github.com/wyx2685/V2bX/releases/download/${last_version}/V2bX-linux-${arch}.zip"; then
-        echo -e "${red}下载 V2bX 失败，请确认 VPS 可以访问 GitHub。${plain}" >&2
-        return 1
-    fi
-
-    unzip V2bX-linux.zip || return 1
-    rm V2bX-linux.zip -f
+    unzip -q "$asset_file" || { rm -rf "$asset_dir"; return 1; }
+    rm -rf "$asset_dir"
     chmod +x V2bX
     mkdir /etc/V2bX/ -p
     cp geoip.dat /etc/V2bX/
@@ -155,7 +164,7 @@ depend() {
 EOF
         chmod +x /etc/init.d/V2bX
         rc-update add V2bX default || return 1
-        echo -e "${green}V2bX ${last_version}${plain} 安装完成，已设置开机自启"
+        echo -e "${green}V2bX ${core_version}${plain} 安装完成，已设置开机自启"
     else
         cat <<EOF > /etc/systemd/system/V2bX.service
 [Unit]
@@ -181,7 +190,7 @@ WantedBy=multi-user.target
 EOF
         systemctl daemon-reload || return 1
         systemctl enable V2bX || return 1
-        echo -e "${green}V2bX ${last_version}${plain} 安装完成，已设置开机自启"
+        echo -e "${green}V2bX ${core_version}${plain} 安装完成，已设置开机自启"
     fi
 
     cp config.json /etc/V2bX/
