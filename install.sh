@@ -1,4 +1,5 @@
 #!/bin/bash
+set -o pipefail
 
 red='\033[0;31m'
 green='\033[0;32m'
@@ -9,6 +10,20 @@ cur_dir=$(pwd)
 
 # check root
 [[ $EUID -ne 0 ]] && echo -e "${red}错误：${plain} 必须使用root用户运行此脚本！\n" && exit 1
+
+# This entry point is only for a fresh VPS. Never replace an existing install.
+if [[ -e /usr/local/V2bX || -L /usr/local/V2bX || -e /etc/V2bX || -L /etc/V2bX || -e /etc/systemd/system/V2bX.service || -e /etc/init.d/V2bX || -e /usr/bin/V2bX || -L /usr/bin/V2bX || -e /usr/bin/v2bx || -L /usr/bin/v2bx ]]; then
+    echo -e "${red}检测到已有 V2bX 文件或服务；此脚本只用于全新 VPS，已停止安装。${plain}" >&2
+    exit 1
+fi
+
+profile_source="${V2BX_PROFILE:-/root/v2bx.private.json}"
+if [[ ! -f "$profile_source" || ! -r "$profile_source" ]]; then
+    echo -e "${red}未找到可读取的配置文件：${profile_source}${plain}" >&2
+    echo "请先按 README 用 SFTP 上传配置文件，再运行安装脚本。" >&2
+    exit 1
+fi
+chmod 600 "$profile_source" || exit 1
 
 # check os
 if [[ -f /etc/redhat-release ]]; then
@@ -42,8 +57,8 @@ elif [[ $arch == "aarch64" || $arch == "arm64" ]]; then
 elif [[ $arch == "s390x" ]]; then
     arch="s390x"
 else
-    arch="64"
-    echo -e "${red}检测架构失败，使用默认架构: ${arch}${plain}"
+    echo -e "${red}不支持的 CPU 架构：$(uname -m)${plain}" >&2
+    exit 1
 fi
 
 echo "架构: ${arch}"
@@ -80,88 +95,47 @@ fi
 
 install_base() {
     if [[ x"${release}" == x"centos" ]]; then
-        yum install epel-release python3 wget curl unzip tar crontabs socat ca-certificates -y >/dev/null 2>&1
-        update-ca-trust force-enable >/dev/null 2>&1
+        yum install epel-release python3 wget curl unzip tar crontabs socat ca-certificates -y >/dev/null 2>&1 || return 1
+        update-ca-trust force-enable >/dev/null 2>&1 || return 1
     elif [[ x"${release}" == x"alpine" ]]; then
-        apk add python3 wget curl unzip tar socat ca-certificates >/dev/null 2>&1
-        update-ca-certificates >/dev/null 2>&1
+        apk add python3 wget curl unzip tar socat ca-certificates >/dev/null 2>&1 || return 1
+        update-ca-certificates >/dev/null 2>&1 || return 1
     elif [[ x"${release}" == x"debian" ]]; then
-        apt-get update -y >/dev/null 2>&1
-        apt install python3 wget curl unzip tar cron socat ca-certificates -y >/dev/null 2>&1
-        update-ca-certificates >/dev/null 2>&1
+        apt-get update -y >/dev/null 2>&1 || return 1
+        apt-get install python3 wget curl unzip tar cron socat ca-certificates -y >/dev/null 2>&1 || return 1
+        update-ca-certificates >/dev/null 2>&1 || return 1
     elif [[ x"${release}" == x"ubuntu" ]]; then
-        apt-get update -y >/dev/null 2>&1
-        apt install python3 wget curl unzip tar cron socat -y >/dev/null 2>&1
-        apt-get install ca-certificates wget -y >/dev/null 2>&1
-        update-ca-certificates >/dev/null 2>&1
+        apt-get update -y >/dev/null 2>&1 || return 1
+        apt-get install python3 wget curl unzip tar cron socat ca-certificates -y >/dev/null 2>&1 || return 1
+        update-ca-certificates >/dev/null 2>&1 || return 1
     elif [[ x"${release}" == x"arch" ]]; then
-        pacman -Sy --noconfirm >/dev/null 2>&1
-        pacman -S --noconfirm --needed python3 wget curl unzip tar cron socat >/dev/null 2>&1
-        pacman -S --noconfirm --needed ca-certificates wget >/dev/null 2>&1
-    fi
-}
-
-# 0: running, 1: not running, 2: not installed
-check_status() {
-    if [[ ! -f /usr/local/V2bX/V2bX ]]; then
-        return 2
-    fi
-    if [[ x"${release}" == x"alpine" ]]; then
-        temp=$(service V2bX status | awk '{print $3}')
-        if [[ x"${temp}" == x"started" ]]; then
-            return 0
-        else
-            return 1
-        fi
-    else
-        temp=$(systemctl status V2bX | grep Active | awk '{print $3}' | cut -d "(" -f2 | cut -d ")" -f1)
-        if [[ x"${temp}" == x"running" ]]; then
-            return 0
-        else
-            return 1
-        fi
+        pacman -Sy --noconfirm >/dev/null 2>&1 || return 1
+        pacman -S --noconfirm --needed python3 wget curl unzip tar cron socat ca-certificates >/dev/null 2>&1 || return 1
     fi
 }
 
 install_V2bX() {
-    if [[ -e /usr/local/V2bX/ ]]; then
-        rm -rf /usr/local/V2bX/
-    fi
-
     mkdir /usr/local/V2bX/ -p
     cd /usr/local/V2bX/
 
-    if  [ $# == 0 ] ;then
-        last_version=$(curl -Ls "https://api.github.com/repos/wyx2685/V2bX/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-        if [[ ! -n "$last_version" ]]; then
-            echo -e "${red}检测 V2bX 版本失败，可能是超出 Github API 限制，请稍后再试，或手动指定 V2bX 版本安装${plain}"
-            exit 1
-        fi
-        echo -e "检测到 V2bX 最新版本：${last_version}，开始安装"
-        wget --no-check-certificate -N --progress=bar -O /usr/local/V2bX/V2bX-linux.zip https://github.com/wyx2685/V2bX/releases/download/${last_version}/V2bX-linux-${arch}.zip
-        if [[ $? -ne 0 ]]; then
-            echo -e "${red}下载 V2bX 失败，请确保你的服务器能够下载 Github 的文件${plain}"
-            exit 1
-        fi
-    else
-        last_version=$1
-        url="https://github.com/wyx2685/V2bX/releases/download/${last_version}/V2bX-linux-${arch}.zip"
-        echo -e "开始安装 V2bX $1"
-        wget --no-check-certificate -N --progress=bar -O /usr/local/V2bX/V2bX-linux.zip ${url}
-        if [[ $? -ne 0 ]]; then
-            echo -e "${red}下载 V2bX $1 失败，请确保此版本存在${plain}"
-            exit 1
-        fi
+    last_version=$(curl -fLsS "https://api.github.com/repos/wyx2685/V2bX/releases/latest" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')
+    if [[ ! "$last_version" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        echo -e "${red}检测 V2bX 最新版本失败，请确认 GitHub 可以访问。${plain}" >&2
+        return 1
+    fi
+    echo "检测到 V2bX 最新版本：${last_version}，开始安装"
+    if ! wget -N --progress=bar -O /usr/local/V2bX/V2bX-linux.zip "https://github.com/wyx2685/V2bX/releases/download/${last_version}/V2bX-linux-${arch}.zip"; then
+        echo -e "${red}下载 V2bX 失败，请确认 VPS 可以访问 GitHub。${plain}" >&2
+        return 1
     fi
 
-    unzip V2bX-linux.zip
+    unzip V2bX-linux.zip || return 1
     rm V2bX-linux.zip -f
     chmod +x V2bX
     mkdir /etc/V2bX/ -p
     cp geoip.dat /etc/V2bX/
     cp geosite.dat /etc/V2bX/
     if [[ x"${release}" == x"alpine" ]]; then
-        rm /etc/init.d/V2bX -f
         cat <<EOF > /etc/init.d/V2bX
 #!/sbin/openrc-run
 
@@ -180,10 +154,9 @@ depend() {
 }
 EOF
         chmod +x /etc/init.d/V2bX
-        rc-update add V2bX default
+        rc-update add V2bX default || return 1
         echo -e "${green}V2bX ${last_version}${plain} 安装完成，已设置开机自启"
     else
-        rm /etc/systemd/system/V2bX.service -f
         cat <<EOF > /etc/systemd/system/V2bX.service
 [Unit]
 Description=V2bX Service
@@ -206,33 +179,12 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 EOF
-        systemctl daemon-reload
-        systemctl stop V2bX
-        systemctl enable V2bX
+        systemctl daemon-reload || return 1
+        systemctl enable V2bX || return 1
         echo -e "${green}V2bX ${last_version}${plain} 安装完成，已设置开机自启"
     fi
 
-    if [[ ! -f /etc/V2bX/config.json ]]; then
-        cp config.json /etc/V2bX/
-        echo -e ""
-        echo -e "全新安装，请先参看教程：https://v2bx.v-50.me/，配置必要的内容"
-        first_install=true
-    else
-        if [[ x"${release}" == x"alpine" ]]; then
-            service V2bX start
-        else
-            systemctl start V2bX
-        fi
-        sleep 2
-        check_status
-        echo -e ""
-        if [[ $? == 0 ]]; then
-            echo -e "${green}V2bX 重启成功${plain}"
-        else
-            echo -e "${red}V2bX 可能启动失败，请稍后使用 V2bX log 查看日志信息，若无法启动，则可能更改了配置格式，请前往 wiki 查看：https://github.com/V2bX-project/V2bX/wiki${plain}"
-        fi
-        first_install=false
-    fi
+    cp config.json /etc/V2bX/
 
     if [[ ! -f /etc/V2bX/dns.json ]]; then
         cp dns.json /etc/V2bX/
@@ -246,50 +198,26 @@ EOF
     if [[ ! -f /etc/V2bX/custom_inbound.json ]]; then
         cp custom_inbound.json /etc/V2bX/
     fi
-    curl -fLsS https://raw.githubusercontent.com/wjy23443200/V2bX-script/master/profile.py -o /usr/local/V2bX/profile.py || return 1
-    if [ -n "${V2BX_PROFILE:-}" ]; then
-        python3 /usr/local/V2bX/profile.py import "$V2BX_PROFILE" || return 1
-    fi
-    curl -o /usr/bin/V2bX -Ls https://raw.githubusercontent.com/wjy23443200/V2bX-script/master/V2bX.sh
+    install -m 644 "$profile_helper_tmp" /usr/local/V2bX/profile.py || return 1
+    python3 /usr/local/V2bX/profile.py import "$profile_source" || return 1
+    curl -fLsS https://raw.githubusercontent.com/wjy23443200/V2bX-script/master/V2bX.sh -o /usr/bin/V2bX || return 1
     chmod +x /usr/bin/V2bX
-    if [ ! -L /usr/bin/v2bx ]; then
-        ln -s /usr/bin/V2bX /usr/bin/v2bx
-        chmod +x /usr/bin/v2bx
-    fi
-    cd $cur_dir
-    rm -f install.sh
+    ln -s /usr/bin/V2bX /usr/bin/v2bx
+    cd "$cur_dir"
     echo -e ""
-    echo "V2bX 管理脚本使用方法 (兼容使用V2bX执行，大小写不敏感): "
-    echo "------------------------------------------"
-    echo "V2bX              - 显示管理菜单 (功能更多)"
-    echo "V2bX start        - 启动 V2bX"
-    echo "V2bX stop         - 停止 V2bX"
-    echo "V2bX restart      - 重启 V2bX"
-    echo "V2bX status       - 查看 V2bX 状态"
-    echo "V2bX enable       - 设置 V2bX 开机自启"
-    echo "V2bX disable      - 取消 V2bX 开机自启"
-    echo "V2bX log          - 查看 V2bX 日志"
-    echo "V2bX x25519       - 生成 x25519 密钥"
-    echo "V2bX generate     - 生成 V2bX 配置文件"
-    echo "V2bX update       - 更新 V2bX"
-    echo "V2bX update x.x.x - 更新 V2bX 指定版本"
-    echo "V2bX install      - 安装 V2bX"
-    echo "V2bX uninstall    - 卸载 V2bX"
-    echo "V2bX version      - 查看 V2bX 版本"
-    echo "------------------------------------------"
-    curl -fsS --max-time 10 "https://api.v-50.me/counter_v2bx" || true
-    # 首次安装询问是否生成配置文件
-    if [[ $first_install == true ]]; then
-        read -rp "检测到你为第一次安装V2bX,是否自动直接生成配置文件？(y/n): " if_generate
-        if [[ $if_generate == [Yy] ]]; then
-            curl -o ./initconfig.sh -Ls https://raw.githubusercontent.com/wjy23443200/V2bX-script/master/initconfig.sh
-            source initconfig.sh
-            rm initconfig.sh -f
-            generate_config_file
-        fi
-    fi
+    echo "开始首次节点配置；完成后可用 v2bx status 查看状态、v2bx log 查看日志。"
+    local initconfig_tmp
+    initconfig_tmp=$(mktemp) || return 1
+    curl -fLsS https://raw.githubusercontent.com/wjy23443200/V2bX-script/master/initconfig.sh -o "$initconfig_tmp" || { rm -f "$initconfig_tmp"; return 1; }
+    source "$initconfig_tmp" || { rm -f "$initconfig_tmp"; return 1; }
+    rm -f "$initconfig_tmp"
+    generate_config_file
 }
 
 echo -e "${green}开始安装${plain}"
-install_base
-install_V2bX $1
+install_base || { echo -e "${red}安装系统依赖失败，请检查软件源。${plain}" >&2; exit 1; }
+profile_helper_tmp=$(mktemp) || exit 1
+trap 'rm -f "$profile_helper_tmp"' EXIT
+curl -fLsS https://raw.githubusercontent.com/wjy23443200/V2bX-script/master/profile.py -o "$profile_helper_tmp" || exit 1
+python3 "$profile_helper_tmp" --profile "$profile_source" validate || exit 1
+install_V2bX
