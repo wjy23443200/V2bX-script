@@ -39,6 +39,16 @@ v2bx status
 v2bx log
 ```
 
+## 安装中断后重试
+
+如果 SSH 掉线后再次安装提示“检测到已有 V2bX 文件或服务”，并且输入 `v2bx` 显示 `command not found`，先执行下面这一整行清理残留：
+
+```bash
+curl -fLsS https://raw.githubusercontent.com/wjy23443200/V2bX-script/master/cleanup-partial.sh -o /root/cleanup-v2bx.sh && bash /root/cleanup-v2bx.sh
+```
+
+清理脚本会拒绝处理正在运行的 V2bX 或已存在 `v2bx` 命令的安装。它把本安装程序可能留下的目录、服务文件和命令移到 `/root/v2bx-recovery.*` 备份目录；**不会删除**你上传的 `/root/v2bx.private.json`。清理成功后，重新执行第 3 步的安装命令。
+
 安装程序会将配置文件保存到 `/etc/V2bX/profile.json`，并把配置文件权限设为仅 root 可读写。`/root/v2bx.private.json` 含有 API Key，也应只在自己的设备和 VPS 上保存。
 
 ## 核心程序来源

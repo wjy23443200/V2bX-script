@@ -14,6 +14,7 @@ cur_dir=$(pwd)
 # This entry point is only for a fresh VPS. Never replace an existing install.
 if [[ -e /usr/local/V2bX || -L /usr/local/V2bX || -e /etc/V2bX || -L /etc/V2bX || -e /etc/systemd/system/V2bX.service || -e /etc/init.d/V2bX || -e /usr/bin/V2bX || -L /usr/bin/V2bX || -e /usr/bin/v2bx || -L /usr/bin/v2bx ]]; then
     echo -e "${red}检测到已有 V2bX 文件或服务；此脚本只用于全新 VPS，已停止安装。${plain}" >&2
+    echo '如果上次安装中断且 v2bx 命令不存在，请按 README 的“安装中断后重试”清理残留。' >&2
     exit 1
 fi
 
